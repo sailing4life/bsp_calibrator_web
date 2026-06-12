@@ -170,9 +170,14 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     def _current(sub):
         if sub.empty:
             return 0.0, 0.0
-        # standaard leeway model: λ = k · heel / BSP²  (heel getekend → tack volgt vanzelf)
-        leeway = np.clip(leeway_k * sub[HEEL].values
-                         / np.maximum(sub[BSP].values, 1.0)**2, -15.0, 15.0)
+        # Standaard leeway model: grootte λ = k · |heel| / BSP², richting altijd
+        # naar lij. De tack (en dus de lijzijde) leiden we af uit sign(TWA),
+        # niet uit de ruwe heel-conventie die per logsysteem verschilt:
+        #   TWA>0 = stuurboordtack → lij = bakboord → HDG − λ
+        #   TWA<0 = bakboordtack   → lij = stuurboord → HDG + λ
+        mag = np.clip(leeway_k * np.abs(sub[HEEL].values)
+                      / np.maximum(sub[BSP].values, 1.0)**2, 0.0, 10.0)
+        leeway = -np.sign(sub[TWA].values) * mag
         vw_x, vw_y = _vec(sub[BSP].values, sub[HDG].values + leeway)
         vg_x, vg_y = _vec(sub[SOG].values, sub[COG].values)
         return vg_x.mean() - vw_x.mean(), vg_y.mean() - vw_y.mean()

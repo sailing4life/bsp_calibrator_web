@@ -78,9 +78,10 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
         if gv.empty:
             cur_x_map[date] = 0.0; cur_y_map[date] = 0.0
             continue
-        # standaard leeway model: λ = k · heel / BSP²  (Heel_signed → tack volgt vanzelf)
+        # Standaard leeway model: λ = k · Heel_signed / BSP². Heel_signed is
+        # Port +, Stbd −, dus het teken wijst vanzelf naar lij (zie cal_1min).
         leeway = np.clip(leeway_k * gv['Heel_signed'].values
-                         / np.maximum(gv[BSP].values, 1.0)**2, -15.0, 15.0)
+                         / np.maximum(gv[BSP].values, 1.0)**2, -10.0, 10.0)
         vw_x, vw_y = _vec(gv[BSP].values, gv[HDG].values + leeway)
         vg_x, vg_y = _vec(gv[SOG].values, gv[COG].values)
         cur_x_map[date] = vg_x.mean() - vw_x.mean()
