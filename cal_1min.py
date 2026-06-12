@@ -25,13 +25,57 @@ def _err(msg, stats=None):
             'table_csv_b64': '', 'stats': stats or {'diag': []}}
 
 
+def _circ_std_deg(series_deg, window):
+    """Rolling circulaire standaarddeviatie (graden), wrap-safe rond 0/360."""
+    rad = np.deg2rad(series_deg)
+    s = np.sin(rad).rolling(window, center=True).mean()
+    c = np.cos(rad).rolling(window, center=True).mean()
+    R = np.sqrt(s**2 + c**2).clip(upper=1.0)
+    return np.degrees(np.sqrt(-2 * np.log(R.clip(lower=1e-12))))
+
+
+def _add_basemap(ax, lon_min, lon_max, lat_min, lat_max):
+    """OSM-tegels als kaartachtergrond; faalt stil zonder internet."""
+    import math, urllib.request
+    from PIL import Image
+
+    def lon2x(lon, z): return (lon + 180) / 360 * 2**z
+    def lat2y(lat, z):
+        return (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * 2**z
+    def y2lat(y, z):
+        return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / 2**z))))
+
+    try:
+        for z in range(16, 0, -1):
+            x0, x1 = int(lon2x(lon_min, z)), int(lon2x(lon_max, z))
+            y0, y1 = int(lat2y(lat_max, z)), int(lat2y(lat_min, z))
+            if (x1 - x0 + 1) * (y1 - y0 + 1) <= 12:
+                break
+        img = Image.new('RGB', ((x1 - x0 + 1) * 256, (y1 - y0 + 1) * 256))
+        for xt in range(x0, x1 + 1):
+            for yt in range(y0, y1 + 1):
+                url = f'https://tile.openstreetmap.org/{z}/{xt}/{yt}.png'
+                req = urllib.request.Request(
+                    url, headers={'User-Agent': 'bsp-calibrator/1.0'})
+                with urllib.request.urlopen(req, timeout=4) as r:
+                    tile = Image.open(io.BytesIO(r.read())).convert('RGB')
+                img.paste(tile, ((xt - x0) * 256, (yt - y0) * 256))
+        extent = [x0 / 2**z * 360 - 180, (x1 + 1) / 2**z * 360 - 180,
+                  y2lat(y1 + 1, z), y2lat(y0, z)]
+        ax.imshow(img, extent=extent, zorder=0, interpolation='bilinear', alpha=0.7)
+        ax.text(0.99, 0.01, '© OpenStreetMap', transform=ax.transAxes,
+                fontsize=6, ha='right', va='bottom', color='gray')
+        return True
+    except Exception:
+        return False
+
+
 def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         max_bsp_std=1.5, max_hdg_std=13.0, max_heel_std=8.0, max_sog_std=1.5,
-        twa_min=-170, twa_max=170):
+        twa_min=-170, twa_max=170, leeway_k=10.0):
 
     BSP = 'BSP'; SOG = 'SOG'; HDG = 'HDG'; COG = 'COG'
     HEEL = 'Heel'; TWA = 'TWA'; LAT = 'Lat'; LON = 'Lon'
-    SEG_N = int(seg_len_s)
 
     plots = []
     diag = []
@@ -40,6 +84,30 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         df_raw = pd.read_csv(csv_path)
     except Exception as e:
         return _err(f'Kan CSV niet lezen: {e}')
+
+    # Sample frequentie detecteren uit tijdkolom
+    _time_cols = [c for c in df_raw.columns
+                  if any(k in c.lower() for k in ('time', 'date', 'tijd', 'ts', 'utc'))]
+    freq_hz = None
+    for _tc in _time_cols:
+        try:
+            _ts = pd.to_datetime(df_raw[_tc], errors='coerce').dropna()
+            if len(_ts) > 10:
+                _dt = _ts.diff().dt.total_seconds().median()
+                if 0.05 < _dt < 60:
+                    freq_hz = 1.0 / _dt
+                    diag.append(f'Sample frequentie: {freq_hz:.2f} Hz '
+                                f'(interval {_dt:.2f}s, kolom "{_tc}")')
+                    break
+        except Exception:
+            pass
+    if freq_hz is None:
+        diag.append('Sample frequentie: onbekend (geen tijdkolom herkend), '
+                    '1 Hz aangenomen')
+        SEG_N = int(seg_len_s)
+    else:
+        SEG_N = max(2, int(round(seg_len_s * freq_hz)))
+    diag.append(f'Sectie lengte: {seg_len_s}s = {SEG_N} samples')
 
     for c in [BSP, SOG, HDG, COG, HEEL, TWA]:
         if c not in df_raw.columns:
@@ -58,6 +126,11 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     for c in [BSP, SOG, HDG, COG, HEEL, TWA]:
         df[c] = pd.to_numeric(df[c], errors='coerce')
 
+    # TWA naar [-180, 180] als de log 0..360 gebruikt
+    if df[TWA].max() > 180:
+        df[TWA] = ((df[TWA] + 180) % 360) - 180
+        diag.append('TWA herschaald van 0..360 naar -180..180')
+
     mask = df[BSP].notna() & df[SOG].notna() & df[HEEL].notna() & (df[BSP] != 0)
     df = df[mask].copy()
     if df.empty:
@@ -67,7 +140,7 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     diag.append(f'Rijen na basisfilter: {n}')
 
     df['BSP_STD'] = df[BSP].rolling(SEG_N, center=True).std()
-    df['HDG_STD'] = df[HDG].rolling(SEG_N, center=True).std()
+    df['HDG_STD'] = _circ_std_deg(df[HDG], SEG_N)
     df['HEEL_STD'] = df[HEEL].rolling(SEG_N, center=True).std()
     df['SOG_STD'] = df[SOG].rolling(SEG_N, center=True).std()
 
@@ -91,20 +164,40 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         diag.append(f'{lbl}: {cum.sum()} ({100*cum.sum()/n:.1f}%)')
     diag.append(f'Stabiel totaal: {stable.sum()} ({100*stable.sum()/n:.1f}%)')
 
-    # Stroom uit stabiele secties
+    # Stroom uit stabiele secties (met leeway-correctie op de watervector)
     df_stab = df[stable & df[HDG].notna() & df[COG].notna()]
-    if df_stab.empty:
-        cur_x = cur_y = 0.0
-    else:
-        vw_x, vw_y = _vec(df_stab[BSP].values, df_stab[HDG].values)
-        vg_x, vg_y = _vec(df_stab[SOG].values, df_stab[COG].values)
-        cur_x = vg_x.mean() - vw_x.mean()
-        cur_y = vg_y.mean() - vw_y.mean()
 
+    def _current(sub):
+        if sub.empty:
+            return 0.0, 0.0
+        # standaard leeway model: λ = k · heel / BSP²  (heel getekend → tack volgt vanzelf)
+        leeway = np.clip(leeway_k * sub[HEEL].values
+                         / np.maximum(sub[BSP].values, 1.0)**2, -15.0, 15.0)
+        vw_x, vw_y = _vec(sub[BSP].values, sub[HDG].values + leeway)
+        vg_x, vg_y = _vec(sub[SOG].values, sub[COG].values)
+        return vg_x.mean() - vw_x.mean(), vg_y.mean() - vw_y.mean()
+
+    cur_x, cur_y = _current(df_stab)
     cur_spd = np.sqrt(cur_x**2 + cur_y**2)
     cur_dir = np.degrees(np.arctan2(cur_x, cur_y)) % 360
-    diag.append(f'Stroom (uit {len(df_stab)} stabiele samples): '
-                f'{cur_spd:.3f} kn @ {cur_dir:.0f}°')
+    diag.append(f'Stroom (uit {len(df_stab)} stabiele samples, '
+                f'leeway k={leeway_k:g}): {cur_spd:.3f} kn @ {cur_dir:.0f}°')
+
+    # Per-tack sanity check: groot verschil duidt op leeway-/kalibratie-bias
+    tack_cur = {}
+    for lbl, sub in [('Stbd (TWA>0)', df_stab[df_stab[TWA] > 0]),
+                     ('Port (TWA<0)', df_stab[df_stab[TWA] < 0])]:
+        if len(sub) >= 10:
+            tx, ty = _current(sub)
+            tack_cur[lbl] = (tx, ty)
+            tspd = np.sqrt(tx**2 + ty**2)
+            tdir = np.degrees(np.arctan2(tx, ty)) % 360
+            diag.append(f'  Stroom {lbl}: {tspd:.3f} kn @ {tdir:.0f}°  (n={len(sub)})')
+    if len(tack_cur) == 2:
+        (sx, sy), (px, py) = tack_cur.values()
+        dmag = np.sqrt((sx - px)**2 + (sy - py)**2)
+        diag.append(f'  Verschil Stbd-Port: {dmag:.3f} kn'
+                    + ('  ⚠ check leeway/kalibratie' if dmag > 0.3 else ''))
 
     # STW_true
     vg_x2, vg_y2 = _vec(df[SOG].values, df[COG].values)
@@ -144,17 +237,21 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         return _err(f'Te weinig secties na filter ({len(valid)}). '
                     'Vergroot drempels of gebruik een langere log.', {'diag': diag})
 
-    a_h, b_h, c_h = np.polyfit(valid['Heel_mean'].values, valid['Pct'].values, 2)
-    a,   b,   c   = np.polyfit(valid['BSP_mean'].values,  valid['Pct'].values, 2)
+    # Sequentiële fit: eerst snelheid, dan heel op de residuen.
+    # Onafhankelijk fitten telt dubbel omdat heel en BSP gecorreleerd zijn.
+    a, b, c = np.polyfit(valid['BSP_mean'].values, valid['Pct'].values, 2)
+    resid = (valid['Pct'].values
+             - (a * valid['BSP_mean'].values**2 + b * valid['BSP_mean'].values + c))
+    a_h, b_h, c_h = np.polyfit(valid['Heel_mean'].values, resid, 2)
 
-    # Plot 1 — Heel vs fout%
+    # Plot 1 — Heel vs restfout%
     fig, ax = plt.subplots()
     x_h = valid['Heel_mean'].values
-    ax.scatter(x_h, valid['Pct'].values, s=10, alpha=0.5, label='stabiele secties')
+    ax.scatter(x_h, resid, s=10, alpha=0.5, label='stabiele secties')
     xf = np.linspace(x_h.min(), x_h.max(), 200)
     ax.plot(xf, a_h*xf**2 + b_h*xf + c_h, lw=2, label='2e orde fit')
-    ax.set_xlabel('Heel (deg)'); ax.set_ylabel('Fout [%]')
-    ax.set_title('Heel vs BSP-fout (%)'); ax.grid(True); ax.legend()
+    ax.set_xlabel('Heel (deg)'); ax.set_ylabel('Restfout [%] (na BSP-fit)')
+    ax.set_title('Heel vs BSP-restfout (%)'); ax.grid(True); ax.legend()
     plt.tight_layout(); plots.append(_fig_to_b64(fig))
 
     # Plot 2 — BSP vs fout%
@@ -171,6 +268,16 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     # H5000 tabel
     heel_pts = np.array([-20., -10., 0., 10., 20.])
     spd_pts  = np.array([2.5, 5., 7.5, 10., 12.5, 15.])
+
+    heel_lo, heel_hi = x_h.min(), x_h.max()
+    bsp_lo, bsp_hi = valid['BSP_mean'].min(), valid['BSP_mean'].max()
+    if heel_lo > heel_pts.min() or heel_hi < heel_pts.max() \
+            or bsp_lo > spd_pts.min() or bsp_hi < spd_pts.max():
+        diag.append(f'⚠ Tabel geëxtrapoleerd buiten databereik: '
+                    f'Heel data [{heel_lo:.0f}°, {heel_hi:.0f}°], '
+                    f'BSP data [{bsp_lo:.1f}, {bsp_hi:.1f}] kn — '
+                    f'cellen daarbuiten zijn onbetrouwbaar')
+
     h5 = pd.DataFrame(index=spd_pts, columns=heel_pts, dtype=float)
     for i, spd in enumerate(spd_pts):
         heel_corr = -(a_h * heel_pts**2 + b_h * heel_pts)
@@ -193,26 +300,38 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     if track is not None and not track.empty:
         geo = valid.dropna(subset=['Lat_mean', 'Lon_mean'])
         fig, ax = plt.subplots(figsize=(8, 7))
-        ax.plot(track[LON], track[LAT], color='lightgray', lw=0.8, zorder=1, label='Track')
+
+        cosl = np.cos(np.deg2rad(track[LAT].mean()))
+        lon_r = track[LON].max() - track[LON].min()
+        lat_r = track[LAT].max() - track[LAT].min()
+        pad_lon = max(lon_r, 0.001) * 0.10
+        pad_lat = max(lat_r, 0.001) * 0.10
+        _add_basemap(ax,
+                     track[LON].min() - pad_lon, track[LON].max() + pad_lon,
+                     track[LAT].min() - pad_lat, track[LAT].max() + pad_lat)
+
+        ax.plot(track[LON], track[LAT], color='dimgray', lw=0.8, zorder=1, label='Track')
         if not geo.empty:
             sc = ax.scatter(geo['Lon_mean'], geo['Lat_mean'],
                             c=geo['Pct'], cmap='RdYlGn_r', s=40, zorder=2,
                             vmin=-max_error_pct, vmax=max_error_pct)
             plt.colorbar(sc, ax=ax, label='BSP fout [%]')
-        lon_r = track[LON].max() - track[LON].min()
-        lat_r = track[LAT].max() - track[LAT].min()
+        # oost-component door cos(lat) delen zodat de pijlrichting op de kaart klopt
         sc_arr = max(lon_r, lat_r) * 0.15
         alx = track[LON].min() + lon_r * 0.08
         aly = track[LAT].max() - lat_r * 0.08
-        ax.annotate('', xy=(alx + cur_x * sc_arr, aly + cur_y * sc_arr),
+        ax.annotate('', xy=(alx + cur_x * sc_arr / cosl, aly + cur_y * sc_arr),
                     xytext=(alx, aly),
                     arrowprops=dict(arrowstyle='-|>', color='royalblue', lw=2), zorder=5)
-        ax.text(alx + cur_x * sc_arr / 2, aly + cur_y * sc_arr / 2 - lat_r * 0.03,
+        ax.text(alx + cur_x * sc_arr / cosl / 2,
+                aly + cur_y * sc_arr / 2 - lat_r * 0.03,
                 f'{cur_spd:.2f} kn @ {cur_dir:.0f}°',
-                color='royalblue', fontsize=8, ha='center')
+                color='royalblue', fontsize=8, ha='center', zorder=5)
+        ax.set_xlim(track[LON].min() - pad_lon, track[LON].max() + pad_lon)
+        ax.set_ylim(track[LAT].min() - pad_lat, track[LAT].max() + pad_lat)
         ax.set_xlabel('Lon'); ax.set_ylabel('Lat')
         ax.set_title('GPS track met stabiele secties')
-        ax.set_aspect('equal'); ax.grid(True)
+        ax.set_aspect(1 / cosl); ax.grid(True, alpha=0.3)
         plt.tight_layout(); plots.append(_fig_to_b64(fig))
 
     csv_b64 = base64.b64encode(h5.to_csv().encode()).decode()

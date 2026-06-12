@@ -26,7 +26,7 @@ def _err(msg, stats=None):
 
 
 def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
-        twa_min=-180, twa_max=180):
+        twa_min=-180, twa_max=180, leeway_k=10.0):
 
     BSP = 'BSP'; SOG = 'SOG'; HDG = 'HDG'; COG = 'COG'
     HEEL = 'HEEL'; TWA = 'TWA'; TIME = 'StartTime'; TACK = 'Tack'
@@ -44,6 +44,11 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
             return _err(f'Kolom "{c}" niet gevonden. '
                         f'Beschikbare kolommen: {list(df.columns[:15])}')
         df[c] = pd.to_numeric(df[c], errors='coerce')
+
+    # TWA naar [-180, 180] als de log 0..360 gebruikt
+    if df[TWA].max() > 180:
+        df[TWA] = ((df[TWA] + 180) % 360) - 180
+        diag.append('TWA herschaald van 0..360 naar -180..180')
 
     if TIME in df.columns:
         df[TIME] = pd.to_datetime(df[TIME], errors='coerce')
@@ -73,7 +78,10 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
         if gv.empty:
             cur_x_map[date] = 0.0; cur_y_map[date] = 0.0
             continue
-        vw_x, vw_y = _vec(gv[BSP].values, gv[HDG].values)
+        # standaard leeway model: λ = k · heel / BSP²  (Heel_signed → tack volgt vanzelf)
+        leeway = np.clip(leeway_k * gv['Heel_signed'].values
+                         / np.maximum(gv[BSP].values, 1.0)**2, -15.0, 15.0)
+        vw_x, vw_y = _vec(gv[BSP].values, gv[HDG].values + leeway)
         vg_x, vg_y = _vec(gv[SOG].values, gv[COG].values)
         cur_x_map[date] = vg_x.mean() - vw_x.mean()
         cur_y_map[date] = vg_y.mean() - vw_y.mean()
@@ -101,16 +109,20 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     x_b = valid[BSP].values
     y   = valid['Pct'].values
 
-    a_h, b_h, c_h = np.polyfit(x_h, y, 2)
-    a,   b,   c   = np.polyfit(x_b, y, 2)
+    # Sequentiële fit: eerst snelheid, dan heel op de residuen.
+    # Onafhankelijk fitten telt dubbel omdat heel en BSP gecorreleerd zijn.
+    a, b, c = np.polyfit(x_b, y, 2)
+    resid = y - (a*x_b**2 + b*x_b + c)
+    a_h, b_h, c_h = np.polyfit(x_h, resid, 2)
 
-    # Plot 1 — Heel_signed vs fout%
+    # Plot 1 — Heel_signed vs restfout%
     fig, ax = plt.subplots()
-    ax.scatter(x_h, y, s=10, alpha=0.5, label='fases')
+    ax.scatter(x_h, resid, s=10, alpha=0.5, label='fases')
     xf = np.linspace(x_h.min(), x_h.max(), 200)
     ax.plot(xf, a_h*xf**2 + b_h*xf + c_h, lw=2, label='2e orde fit')
     ax.set_xlabel('Heel_signed (deg)  [Port +, Stbd −]')
-    ax.set_ylabel('Fout [%]'); ax.set_title('Heel_signed vs BSP-fout (%)')
+    ax.set_ylabel('Restfout [%] (na BSP-fit)')
+    ax.set_title('Heel_signed vs BSP-restfout (%)')
     ax.grid(True); ax.legend(); plt.tight_layout(); plots.append(_fig_to_b64(fig))
 
     # Plot 2 — BSP vs fout%
@@ -126,6 +138,14 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     # H5000 tabel
     heel_pts = np.array([-20., -10., 0., 10., 20.])
     spd_pts  = np.array([2.5, 5., 7.5, 10., 12.5, 15.])
+
+    if x_h.min() > heel_pts.min() or x_h.max() < heel_pts.max() \
+            or x_b.min() > spd_pts.min() or x_b.max() < spd_pts.max():
+        diag.append(f'⚠ Tabel geëxtrapoleerd buiten databereik: '
+                    f'Heel data [{x_h.min():.0f}°, {x_h.max():.0f}°], '
+                    f'BSP data [{x_b.min():.1f}, {x_b.max():.1f}] kn — '
+                    f'cellen daarbuiten zijn onbetrouwbaar')
+
     h5 = pd.DataFrame(index=spd_pts, columns=heel_pts, dtype=float)
     for i, spd in enumerate(spd_pts):
         heel_corr = -(a_h * heel_pts**2 + b_h * heel_pts)
