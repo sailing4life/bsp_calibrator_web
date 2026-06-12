@@ -26,7 +26,7 @@ def _err(msg, stats=None):
 
 
 def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
-        twa_min=-180, twa_max=180, leeway_k=10.0):
+        twa_min=-180, twa_max=180, leeway_k=10.0, fit_mode='independent'):
 
     BSP = 'BSP'; SOG = 'SOG'; HDG = 'HDG'; COG = 'COG'
     HEEL = 'HEEL'; TWA = 'TWA'; TIME = 'StartTime'; TACK = 'Tack'
@@ -109,20 +109,27 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     x_b = valid[BSP].values
     y   = valid['Pct'].values
 
-    # Sequentiële fit: eerst snelheid, dan heel op de residuen.
-    # Onafhankelijk fitten telt dubbel omdat heel en BSP gecorreleerd zijn.
     a, b, c = np.polyfit(x_b, y, 2)
-    resid = y - (a*x_b**2 + b*x_b + c)
-    a_h, b_h, c_h = np.polyfit(x_h, resid, 2)
+    if fit_mode == 'sequential':
+        # Heel gefit op de residuen van de BSP-fit (voorkomt dubbeltelling
+        # bij scheve data, maar ruisiger bij gebalanceerde data).
+        y_h = y - (a*x_b**2 + b*x_b + c)
+        heel_lbl = 'Restfout [%] (na BSP-fit)'
+    else:
+        # Onafhankelijke fit (origineel) — robuuster bij gebalanceerde data.
+        y_h = y
+        heel_lbl = 'Fout [%]'
+    a_h, b_h, c_h = np.polyfit(x_h, y_h, 2)
+    diag.append(f'Fit-methode: {fit_mode}')
 
-    # Plot 1 — Heel_signed vs restfout%
+    # Plot 1 — Heel_signed vs fout%
     fig, ax = plt.subplots()
-    ax.scatter(x_h, resid, s=10, alpha=0.5, label='fases')
+    ax.scatter(x_h, y_h, s=10, alpha=0.5, label='fases')
     xf = np.linspace(x_h.min(), x_h.max(), 200)
     ax.plot(xf, a_h*xf**2 + b_h*xf + c_h, lw=2, label='2e orde fit')
     ax.set_xlabel('Heel_signed (deg)  [Port +, Stbd −]')
-    ax.set_ylabel('Restfout [%] (na BSP-fit)')
-    ax.set_title('Heel_signed vs BSP-restfout (%)')
+    ax.set_ylabel(heel_lbl)
+    ax.set_title('Heel_signed vs BSP-fout (%)')
     ax.grid(True); ax.legend(); plt.tight_layout(); plots.append(_fig_to_b64(fig))
 
     # Plot 2 — BSP vs fout%

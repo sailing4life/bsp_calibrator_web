@@ -38,6 +38,7 @@ def run_1min():
             max_heel_std=float(request.form.get('max_heel_std', 8.0)),
             max_error_pct=float(request.form.get('max_error_pct', 15.0)),
             leeway_k=float(request.form.get('leeway_k', 10.0)),
+            fit_mode=request.form.get('fit_mode', 'independent'),
         )
     except Exception:
         result = _err_result(f'Verwerking mislukt:\n{traceback.format_exc()}')
@@ -64,6 +65,7 @@ def run_phasetable():
             bsp_min=float(request.form.get('bsp_min', 3.0)),
             max_error_pct=float(request.form.get('max_error_pct', 5.0)),
             leeway_k=float(request.form.get('leeway_k', 10.0)),
+            fit_mode=request.form.get('fit_mode', 'independent'),
         )
     except Exception:
         result = _err_result(f'Verwerking mislukt:\n{traceback.format_exc()}')
