@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="row g-4">
+
+  <!-- ── CSV Logfile ── -->
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header bg-primary text-white">
+        CSV Logfile — stabiele secties
+        <div class="fw-normal opacity-75 small">Expedition raw log (.csv)</div>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/run/1min" enctype="multipart/form-data">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">CSV bestand</label>
+            <input type="file" name="csvfile" accept=".csv" class="form-control" required>
+          </div>
+
+          <p class="text-muted small mb-1 mt-3">Stabiliteitsfilters</p>
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label small mb-1">Sectie lengte (s)</label>
+              <input type="number" name="seg_len_s" value="30" min="10" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">BSP minimum (kn)</label>
+              <input type="number" name="bsp_min" value="5.0" step="0.5" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Max BSP STD (kn)</label>
+              <input type="number" name="max_bsp_std" value="1.5" step="0.1" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Max SOG STD (kn)</label>
+              <input type="number" name="max_sog_std" value="1.5" step="0.1" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Max HDG STD (°)</label>
+              <input type="number" name="max_hdg_std" value="13.0" step="1" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Max Heel STD (°)</label>
+              <input type="number" name="max_heel_std" value="8.0" step="0.5" class="form-control form-control-sm">
+            </div>
+            <div class="col-12">
+              <label class="form-label small mb-1">Outlier filter max fout (%)</label>
+              <input type="number" name="max_error_pct" value="15.0" step="1" class="form-control form-control-sm">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100 mt-2">Kalibreer →</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PhaseTable ── -->
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header bg-success text-white">
+        PhaseTable — Excel
+        <div class="fw-normal opacity-75 small">Stabiele secties al voorbereid (.xlsx)</div>
+      </div>
+      <div class="card-body">
+        <form method="post" action="/run/phasetable" enctype="multipart/form-data">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Excel bestand (.xlsx)</label>
+            <input type="file" name="xlsfile" accept=".xlsx,.xls" class="form-control" required>
+          </div>
+
+          <p class="text-muted small mb-1 mt-3">Instellingen</p>
+          <div class="row g-2 mb-2">
+            <div class="col-12">
+              <label class="form-label small mb-1">Sheet naam</label>
+              <input type="text" name="sheet_name" value="Phase Table" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">BSP minimum (kn)</label>
+              <input type="number" name="bsp_min" value="3.0" step="0.5" class="form-control form-control-sm">
+            </div>
+            <div class="col-6">
+              <label class="form-label small mb-1">Outlier filter max fout (%)</label>
+              <input type="number" name="max_error_pct" value="5.0" step="1" class="form-control form-control-sm">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-success w-100 mt-2">Kalibreer →</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
