@@ -5,6 +5,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from confidence import build_confidence, confidence_table_html
+
 
 def _fig_to_b64(fig):
     buf = io.BytesIO()
@@ -22,7 +24,8 @@ def _vec(speed, angle_deg):
 
 def _err(msg, stats=None):
     return {'error': msg, 'plots': [], 'table_html': '',
-            'table_csv_b64': '', 'stats': stats or {'diag': []}}
+            'table_csv_b64': '', 'confidence': None,
+            'stats': stats or {'diag': []}}
 
 
 def _circ_std_deg(series_deg, window):
@@ -72,7 +75,7 @@ def _add_basemap(ax, lon_min, lon_max, lat_min, lat_max):
 
 def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         max_bsp_std=1.5, max_hdg_std=13.0, max_heel_std=8.0, max_sog_std=1.5,
-        twa_min=-170, twa_max=170, leeway_k=10.0, fit_mode='independent'):
+        twa_min=-170, twa_max=170, leeway_k=0.0, fit_mode='independent'):
 
     BSP = 'BSP'; SOG = 'SOG'; HDG = 'HDG'; COG = 'COG'
     HEEL = 'Heel'; TWA = 'TWA'; LAT = 'Lat'; LON = 'Lon'
@@ -138,6 +141,10 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
 
     n = len(df)
     diag.append(f'Rijen na basisfilter: {n}')
+    if abs(leeway_k) < 1e-9:
+        diag.append('Leeway-correctie: uit')
+    else:
+        diag.append(f'Leeway-correctie: aan (k={leeway_k:g})')
 
     df['BSP_STD'] = df[BSP].rolling(SEG_N, center=True).std()
     df['HDG_STD'] = _circ_std_deg(df[HDG], SEG_N)
@@ -247,16 +254,22 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
     y   = valid['Pct'].values
 
     a, b, c = np.polyfit(x_b, y, 2)
+    speed_fit = a*x_b**2 + b*x_b + c
     if fit_mode == 'sequential':
         # Heel gefit op de residuen van de BSP-fit (voorkomt dubbeltelling
         # bij scheve data, maar ruisiger bij gebalanceerde data).
-        y_h = y - (a*x_b**2 + b*x_b + c)
+        y_h = y - speed_fit
         heel_lbl = 'Restfout [%] (na BSP-fit)'
     else:
         # Onafhankelijke fit (origineel) — robuuster bij gebalanceerde data.
         y_h = y
         heel_lbl = 'Fout [%]'
     a_h, b_h, c_h = np.polyfit(x_h, y_h, 2)
+    heel_fit = a_h*x_h**2 + b_h*x_h + c_h
+    if fit_mode == 'sequential':
+        fit_residuals = y_h - heel_fit
+    else:
+        fit_residuals = np.concatenate([y - speed_fit, y_h - heel_fit])
     diag.append(f'Fit-methode: {fit_mode}')
 
     # Plot 1 — Heel vs fout%
@@ -298,6 +311,17 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         h5.iloc[i] = spd * heel_corr / 100 + base_corr
     h5 = h5.round(3)
     h5.index.name = 'BSP (kn)'; h5.columns.name = 'Heel (deg)'
+
+    confidence_scores, confidence_summary = build_confidence(
+        valid, 'BSP_mean', 'Heel_mean', fit_residuals, spd_pts, heel_pts,
+        max_error_pct)
+    confidence_html = confidence_table_html(confidence_scores)
+    rmse = confidence_summary['rmse_pct']
+    rmse_txt = f'{rmse:.1f}%' if np.isfinite(rmse) else 'n/a'
+    diag.append(f'Confidence gemiddeld: {confidence_summary["score"]}/100 '
+                f'({confidence_summary["label"]}), fit-spreiding {rmse_txt}')
+    for warning in confidence_summary['warnings']:
+        diag.append(f'Confidence waarschuwing: {warning}')
 
     # Plot 3 — H5000 lijnen
     fig, ax = plt.subplots()
@@ -352,5 +376,9 @@ def run(csv_path, seg_len_s=30, bsp_min=5.0, max_error_pct=15.0,
         'error': None, 'plots': plots,
         'table_html': h5.to_html(classes='table table-sm table-bordered', border=0),
         'table_csv_b64': csv_b64,
+        'confidence': {
+            'table_html': confidence_html,
+            'summary': confidence_summary,
+        },
         'stats': {'diag': diag, 'n_sections': len(valid)},
     }

@@ -1,119 +1,155 @@
 {% extends "base.html" %}
 {% block content %}
 
-<div class="row g-4">
+<section class="workspace-head">
+  <div>
+    <p class="eyebrow">BSP calibration</p>
+    <h1>Meet, filter, bewijs.</h1>
+    <p class="lede">Upload een raw log of Phase Table en genereer een H5000-correctietabel met confidence per cel.</p>
+  </div>
+  <div class="workflow-strip" aria-label="Workflow">
+    <span><strong>1. Import</strong>CSV of Excel</span>
+    <span><strong>2. Filter</strong>Stabiele secties</span>
+    <span><strong>3. Output</strong>H5000 + confidence</span>
+  </div>
+</section>
 
-  <!-- ── CSV Logfile ── -->
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header bg-primary text-white">
-        CSV Logfile — stabiele secties
-        <div class="fw-normal opacity-75 small">Expedition raw log (.csv)</div>
+<div class="upload-grid">
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <span class="panel-kicker">Raw log</span>
+        <h2>CSV Logfile</h2>
       </div>
-      <div class="card-body">
-        <form method="post" action="/run/1min" enctype="multipart/form-data">
+      <span class="method-badge">Expedition CSV</span>
+    </div>
+    <div class="panel-body">
+      <form method="post" action="/run/1min" enctype="multipart/form-data">
+        <div>
+          <label class="field-label">CSV bestand</label>
+          <input type="file" name="csvfile" accept=".csv" class="form-control" required>
+        </div>
 
-          <div class="mb-3">
-            <label class="form-label fw-semibold">CSV bestand</label>
-            <input type="file" name="csvfile" accept=".csv" class="form-control" required>
+        <div class="settings-grid">
+          <div>
+            <label class="field-label">Sectie lengte (s)</label>
+            <input type="number" name="seg_len_s" value="30" min="10" class="form-control" aria-label="Sectie lengte in seconden">
           </div>
+          <div>
+            <label class="field-label">BSP minimum (kn)</label>
+            <input type="number" name="bsp_min" value="5.0" step="0.5" class="form-control" aria-label="BSP minimum in knopen">
+          </div>
+          <div>
+            <label class="field-label">Max BSP STD (kn)</label>
+            <input type="number" name="max_bsp_std" value="1.5" step="0.1" class="form-control" aria-label="Maximale BSP standaarddeviatie">
+          </div>
+          <div>
+            <label class="field-label">Max SOG STD (kn)</label>
+            <input type="number" name="max_sog_std" value="1.5" step="0.1" class="form-control" aria-label="Maximale SOG standaarddeviatie">
+          </div>
+        </div>
 
-          <p class="text-muted small mb-1 mt-3">Stabiliteitsfilters</p>
-          <div class="row g-2 mb-2">
-            <div class="col-6">
-              <label class="form-label small mb-1">Sectie lengte (s)</label>
-              <input type="number" name="seg_len_s" value="30" min="10" class="form-control form-control-sm">
+        <details class="advanced">
+          <summary>Advanced filters</summary>
+          <div class="settings-grid">
+            <div>
+              <label class="field-label">Max HDG STD (deg)</label>
+              <input type="number" name="max_hdg_std" value="13.0" step="1" class="form-control" aria-label="Maximale HDG standaarddeviatie">
             </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">BSP minimum (kn)</label>
-              <input type="number" name="bsp_min" value="5.0" step="0.5" class="form-control form-control-sm">
+            <div>
+              <label class="field-label">Max Heel STD (deg)</label>
+              <input type="number" name="max_heel_std" value="8.0" step="0.5" class="form-control" aria-label="Maximale heel standaarddeviatie">
             </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Max BSP STD (kn)</label>
-              <input type="number" name="max_bsp_std" value="1.5" step="0.1" class="form-control form-control-sm">
+            <div>
+              <label class="field-label">Max fout (%)</label>
+              <input type="number" name="max_error_pct" value="15.0" step="1" class="form-control" aria-label="Outlier filter maximale fout in procent">
             </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Max SOG STD (kn)</label>
-              <input type="number" name="max_sog_std" value="1.5" step="0.1" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Max HDG STD (°)</label>
-              <input type="number" name="max_hdg_std" value="13.0" step="1" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Max Heel STD (°)</label>
-              <input type="number" name="max_heel_std" value="8.0" step="0.5" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Outlier filter max fout (%)</label>
-              <input type="number" name="max_error_pct" value="15.0" step="1" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Leeway k (0 = uit)</label>
-              <input type="number" name="leeway_k" value="10.0" step="1" class="form-control form-control-sm">
-            </div>
-            <div class="col-12">
-              <label class="form-label small mb-1">Fit-methode</label>
-              <select name="fit_mode" class="form-select form-select-sm">
-                <option value="independent" selected>Onafhankelijk (origineel)</option>
-                <option value="sequential">Sequentieel (heel op residuen)</option>
+            <div>
+              <label class="field-label">Fit-methode</label>
+              <select name="fit_mode" class="form-select" aria-label="Fit-methode">
+                <option value="independent" selected>Onafhankelijk</option>
+                <option value="sequential">Sequentieel</option>
               </select>
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary w-100 mt-2">Kalibreer →</button>
-        </form>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── PhaseTable ── -->
-  <div class="col-md-6">
-    <div class="card h-100">
-      <div class="card-header bg-success text-white">
-        PhaseTable — Excel
-        <div class="fw-normal opacity-75 small">Stabiele secties al voorbereid (.xlsx)</div>
-      </div>
-      <div class="card-body">
-        <form method="post" action="/run/phasetable" enctype="multipart/form-data">
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Excel bestand (.xlsx)</label>
-            <input type="file" name="xlsfile" accept=".xlsx,.xls" class="form-control" required>
-          </div>
-
-          <p class="text-muted small mb-1 mt-3">Instellingen</p>
-          <div class="row g-2 mb-2">
-            <div class="col-12">
-              <label class="form-label small mb-1">Sheet naam</label>
-              <input type="text" name="sheet_name" value="Phase Table" class="form-control form-control-sm">
+          <div class="leeway-control" data-leeway-control>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" id="csv-leeway" data-leeway-toggle>
+              <label class="form-check-label" for="csv-leeway">Leeway-correctie</label>
+              <span class="leeway-note">Standaard uit voor schonere BSP-calibratie.</span>
             </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">BSP minimum (kn)</label>
-              <input type="number" name="bsp_min" value="3.0" step="0.5" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Outlier filter max fout (%)</label>
-              <input type="number" name="max_error_pct" value="5.0" step="1" class="form-control form-control-sm">
-            </div>
-            <div class="col-6">
-              <label class="form-label small mb-1">Leeway k (0 = uit)</label>
-              <input type="number" name="leeway_k" value="10.0" step="1" class="form-control form-control-sm">
-            </div>
-            <div class="col-12">
-              <label class="form-label small mb-1">Fit-methode</label>
-              <select name="fit_mode" class="form-select form-select-sm">
-                <option value="independent" selected>Onafhankelijk (origineel)</option>
-                <option value="sequential">Sequentieel (heel op residuen)</option>
-              </select>
+            <div>
+              <label class="field-label">k</label>
+              <input type="hidden" name="leeway_k" value="0" data-leeway-hidden>
+              <input type="number" value="10.0" step="1" class="form-control" data-leeway-value aria-label="Leeway k factor">
             </div>
           </div>
+        </details>
 
-          <button type="submit" class="btn btn-success w-100 mt-2">Kalibreer →</button>
-        </form>
-      </div>
+        <button type="submit" class="btn-calibrate">Start BSP calibratie</button>
+      </form>
     </div>
-  </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <span class="panel-kicker">Prepared data</span>
+        <h2>Phase Table Excel</h2>
+      </div>
+      <span class="method-badge">.xlsx / .xls</span>
+    </div>
+    <div class="panel-body">
+      <form method="post" action="/run/phasetable" enctype="multipart/form-data">
+        <div>
+          <label class="field-label">Excel bestand</label>
+          <input type="file" name="xlsfile" accept=".xlsx,.xls" class="form-control" required>
+        </div>
+
+        <div class="settings-grid">
+          <div class="wide">
+            <label class="field-label">Sheet naam</label>
+            <input type="text" name="sheet_name" value="Phase Table" class="form-control">
+          </div>
+          <div>
+            <label class="field-label">BSP minimum (kn)</label>
+            <input type="number" name="bsp_min" value="3.0" step="0.5" class="form-control" aria-label="BSP minimum in knopen">
+          </div>
+          <div>
+            <label class="field-label">Max fout (%)</label>
+            <input type="number" name="max_error_pct" value="5.0" step="1" class="form-control" aria-label="Outlier filter maximale fout in procent">
+          </div>
+          <div class="wide">
+            <label class="field-label">Fit-methode</label>
+            <select name="fit_mode" class="form-select" aria-label="Fit-methode">
+              <option value="independent" selected>Onafhankelijk</option>
+              <option value="sequential">Sequentieel</option>
+            </select>
+          </div>
+        </div>
+
+        <details class="advanced">
+          <summary>Leeway optie</summary>
+          <div class="leeway-control" data-leeway-control>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" id="phase-leeway" data-leeway-toggle>
+              <label class="form-check-label" for="phase-leeway">Leeway-correctie</label>
+              <span class="leeway-note">Standaard uit; alleen aanzetten voor gecontroleerde tests.</span>
+            </div>
+            <div>
+              <label class="field-label">k</label>
+              <input type="hidden" name="leeway_k" value="0" data-leeway-hidden>
+              <input type="number" value="10.0" step="1" class="form-control" data-leeway-value aria-label="Leeway k factor">
+            </div>
+          </div>
+        </details>
+
+        <button type="submit" class="btn-calibrate">Start Phase Table calibratie</button>
+      </form>
+    </div>
+  </section>
 
 </div>
 {% endblock %}

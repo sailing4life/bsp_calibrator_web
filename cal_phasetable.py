@@ -5,6 +5,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from confidence import build_confidence, confidence_table_html
+
 
 def _fig_to_b64(fig):
     buf = io.BytesIO()
@@ -22,11 +24,12 @@ def _vec(speed, angle_deg):
 
 def _err(msg, stats=None):
     return {'error': msg, 'plots': [], 'table_html': '',
-            'table_csv_b64': '', 'stats': stats or {'diag': []}}
+            'table_csv_b64': '', 'confidence': None,
+            'stats': stats or {'diag': []}}
 
 
 def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
-        twa_min=-180, twa_max=180, leeway_k=10.0, fit_mode='independent'):
+        twa_min=-180, twa_max=180, leeway_k=0.0, fit_mode='independent'):
 
     BSP = 'BSP'; SOG = 'SOG'; HDG = 'HDG'; COG = 'COG'
     HEEL = 'HEEL'; TWA = 'TWA'; TIME = 'StartTime'; TACK = 'Tack'
@@ -59,7 +62,8 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     if TACK in df.columns:
         tack_side = (df[TACK].astype(str).str.split('/', expand=True)[0]
                      .map({'Port': +1, 'Stbd': -1}))
-        df['Heel_signed'] = df[HEEL].abs() * tack_side
+        df['Heel_signed'] = np.where(
+            tack_side.notna(), df[HEEL].abs() * tack_side, df[HEEL])
     else:
         df['Heel_signed'] = df[HEEL]
 
@@ -70,6 +74,10 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
         return _err('Geen geldige data na basisfilter.')
 
     diag.append(f'Fases na basisfilter: {len(df)}')
+    if abs(leeway_k) < 1e-9:
+        diag.append('Leeway-correctie: uit')
+    else:
+        diag.append(f'Leeway-correctie: aan (k={leeway_k:g})')
 
     # Stroom per dag
     cur_x_map = {}; cur_y_map = {}
@@ -111,16 +119,22 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     y   = valid['Pct'].values
 
     a, b, c = np.polyfit(x_b, y, 2)
+    speed_fit = a*x_b**2 + b*x_b + c
     if fit_mode == 'sequential':
         # Heel gefit op de residuen van de BSP-fit (voorkomt dubbeltelling
         # bij scheve data, maar ruisiger bij gebalanceerde data).
-        y_h = y - (a*x_b**2 + b*x_b + c)
+        y_h = y - speed_fit
         heel_lbl = 'Restfout [%] (na BSP-fit)'
     else:
         # Onafhankelijke fit (origineel) — robuuster bij gebalanceerde data.
         y_h = y
         heel_lbl = 'Fout [%]'
     a_h, b_h, c_h = np.polyfit(x_h, y_h, 2)
+    heel_fit = a_h*x_h**2 + b_h*x_h + c_h
+    if fit_mode == 'sequential':
+        fit_residuals = y_h - heel_fit
+    else:
+        fit_residuals = np.concatenate([y - speed_fit, y_h - heel_fit])
     diag.append(f'Fit-methode: {fit_mode}')
 
     # Plot 1 — Heel_signed vs fout%
@@ -162,6 +176,17 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
     h5 = h5.round(3)
     h5.index.name = 'BSP (kn)'; h5.columns.name = 'Heel (deg)'
 
+    confidence_scores, confidence_summary = build_confidence(
+        valid, BSP, 'Heel_signed', fit_residuals, spd_pts, heel_pts,
+        max_error_pct)
+    confidence_html = confidence_table_html(confidence_scores)
+    rmse = confidence_summary['rmse_pct']
+    rmse_txt = f'{rmse:.1f}%' if np.isfinite(rmse) else 'n/a'
+    diag.append(f'Confidence gemiddeld: {confidence_summary["score"]}/100 '
+                f'({confidence_summary["label"]}), fit-spreiding {rmse_txt}')
+    for warning in confidence_summary['warnings']:
+        diag.append(f'Confidence waarschuwing: {warning}')
+
     # Plot 3 — H5000 lijnen
     fig, ax = plt.subplots()
     for spd in h5.index:
@@ -177,5 +202,9 @@ def run(excel_path, sheet_name='Phase Table', bsp_min=3.0, max_error_pct=5.0,
         'error': None, 'plots': plots,
         'table_html': h5.to_html(classes='table table-sm table-bordered', border=0),
         'table_csv_b64': csv_b64,
+        'confidence': {
+            'table_html': confidence_html,
+            'summary': confidence_summary,
+        },
         'stats': {'diag': diag, 'n_sections': len(valid)},
     }

@@ -1,6 +1,5 @@
 import os
 import tempfile
-import traceback
 from flask import Flask, request, render_template, redirect, url_for
 
 app = Flask(__name__)
@@ -9,7 +8,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB
 
 def _err_result(msg):
     return {'error': msg, 'plots': [], 'table_html': '',
-            'table_csv_b64': '', 'stats': {'diag': []}}
+            'table_csv_b64': '', 'confidence': None, 'stats': {'diag': []}}
 
 
 @app.route('/')
@@ -37,11 +36,12 @@ def run_1min():
             max_hdg_std=float(request.form.get('max_hdg_std', 13.0)),
             max_heel_std=float(request.form.get('max_heel_std', 8.0)),
             max_error_pct=float(request.form.get('max_error_pct', 15.0)),
-            leeway_k=float(request.form.get('leeway_k', 10.0)),
+            leeway_k=float(request.form.get('leeway_k', 0.0)),
             fit_mode=request.form.get('fit_mode', 'independent'),
         )
     except Exception:
-        result = _err_result(f'Verwerking mislukt:\n{traceback.format_exc()}')
+        app.logger.exception('CSV calibration failed')
+        result = _err_result('Verwerking mislukt. Controleer het bestand en de instellingen.')
     finally:
         os.unlink(tmp)
 
@@ -64,11 +64,12 @@ def run_phasetable():
             sheet_name=request.form.get('sheet_name', 'Phase Table'),
             bsp_min=float(request.form.get('bsp_min', 3.0)),
             max_error_pct=float(request.form.get('max_error_pct', 5.0)),
-            leeway_k=float(request.form.get('leeway_k', 10.0)),
+            leeway_k=float(request.form.get('leeway_k', 0.0)),
             fit_mode=request.form.get('fit_mode', 'independent'),
         )
     except Exception:
-        result = _err_result(f'Verwerking mislukt:\n{traceback.format_exc()}')
+        app.logger.exception('Phase table calibration failed')
+        result = _err_result('Verwerking mislukt. Controleer het bestand en de instellingen.')
     finally:
         os.unlink(tmp)
 
